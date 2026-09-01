@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  ACR_NAME: <TON_ACR_NAME>            # ex: acrmlopsstage (sans .azurecr.io)
+  ACR_NAME:b2f79a6b7a564a19ab373ce9c22c2bc6            # ex: acrmlopsstage (sans .azurecr.io)
   IMAGE_NAME: california-housing-scoring
   RESOURCE_GROUP: afenichamal
   WORKSPACE_NAME: ws-mlops-stage-amal
