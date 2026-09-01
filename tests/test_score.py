@@ -44,3 +44,4 @@ def test_run_handles_invalid_input_gracefully():
     score.model = FakeModel()
     result = score.run("ceci n'est pas du json valide")
     assert "error" in result
+
