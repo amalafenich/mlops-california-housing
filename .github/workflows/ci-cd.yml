@@ -1,0 +1,130 @@
+name: CI/CD - California Housing Model
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ACR_NAME: <TON_ACR_NAME>            # ex: acrmlopsstage (sans .azurecr.io)
+  IMAGE_NAME: california-housing-scoring
+  RESOURCE_GROUP: afenichamal
+  WORKSPACE_NAME: ws-mlops-stage-amal
+  ENDPOINT_NAME: california-housing-endpoint
+
+jobs:
+  # -----------------------------------------------------------------
+  # Étape 1 : Tests CI (linting + tests unitaires) — à chaque push/PR
+  # -----------------------------------------------------------------
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Installer les dépendances de dev
+        run: pip install -r requirements-dev.txt
+
+      - name: Linting (flake8)
+        run: flake8 pipeline/ deployment/ tests/ --max-line-length=120 --extend-ignore=E402
+
+      - name: Tests unitaires (pytest)
+        run: pytest tests/ -v
+
+  # -----------------------------------------------------------------
+  # Étape 2 : Build de l'image Docker + Push vers Azure Container Registry
+  # (uniquement sur push vers main, pas sur les pull requests)
+  # -----------------------------------------------------------------
+  build-and-push:
+    needs: lint-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Connexion à Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Connexion à Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Définir le tag de l'image (SHA du commit)
+        id: vars
+        run: echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Build de l'image Docker
+        run: |
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }} \
+                       -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+                       ./deployment
+
+      - name: Push de l'image vers ACR
+        run: |
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+
+  # -----------------------------------------------------------------
+  # Étape 3 : Déploiement sur l'Azure Managed Online Endpoint
+  # -----------------------------------------------------------------
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Connexion à Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Installer l'extension Azure ML CLI
+        run: az extension add -n ml -y
+
+      - name: Créer l'endpoint (si inexistant)
+        run: |
+          az ml online-endpoint show --name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} || \
+          az ml online-endpoint create --name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            --auth-mode key
+
+      - name: Déployer la nouvelle version (Blue Deployment)
+        run: |
+          az ml online-deployment create \
+            --name blue \
+            --endpoint-name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            --model azureml:california-housing-model@latest \
+            --environment-variables AZUREML_ENTRY_SCRIPT=score.py \
+            --instance-type Standard_DS2_v2 \
+            --instance-count 1 \
+            --set environment.image=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+            || az ml online-deployment update \
+            --name blue \
+            --endpoint-name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            --set environment.image=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+
+      - name: Router 100% du trafic vers la nouvelle version
+        run: |
+          az ml online-endpoint update --name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            --traffic "blue=100"
