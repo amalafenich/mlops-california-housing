@@ -118,3 +118,19 @@ jobs:
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
             --traffic "blue=100"
+  test-endpoint:
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Tester l'endpoint Azure ML
+        run: |
+          az ml online-endpoint invoke \
+            --name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            --request-file sample-request.json
