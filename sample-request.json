@@ -1,0 +1,21 @@
+{
+  "data": [
+    {
+      "longitude": -122.23,
+      "latitude": 37.88,
+      "housing_median_age": 41.0,
+      "total_rooms": 880.0,
+      "total_bedrooms": 129.0,
+      "population": 322.0,
+      "households": 126.0,
+      "median_income": 8.3252,
+      "rooms_per_household": 6.9841269841,
+      "bedrooms_per_room": 0.1465909091,
+      "population_per_household": 2.5555555556,
+      "ocean_proximity_INLAND": 1,
+      "ocean_proximity_ISLAND": 0,
+      "ocean_proximity_NEAR BAY": 0,
+      "ocean_proximity_NEAR OCEAN": 0
+    }
+  ]
+}
