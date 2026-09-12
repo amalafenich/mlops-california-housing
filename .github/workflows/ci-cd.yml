@@ -79,12 +79,17 @@ jobs:
     needs: build-and-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
+    env:
+      # Évite le conflit de permissions sur le dossier système partagé
+      # /opt/az/extensions (accessible en écriture uniquement par root).
+      # Force Azure CLI à utiliser un dossier d'extensions propre à l'utilisateur.
+      AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
 
-      - name: Installer l'extension Azure ML CLI (si absente)
-        run: az extension add -n ml -y --allow-preview true || true
+      - name: Vérifier/installer l'extension Azure ML CLI
+        run: az extension list -o table | grep -q '^ml ' || az extension add -n ml -y
 
       - name: Créer l'endpoint (si inexistant)
         run: |
