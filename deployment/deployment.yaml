@@ -1,0 +1,18 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+name: blue
+endpoint_name: california-housing-endpoint
+model: azureml:california-housing-model@latest
+environment:
+  image: b2f79a6b7a564a19ab373ce9c22c2bc6.azurecr.io/california-housing-scoring:latest
+  inference_config:
+    liveness_route:
+      path: /
+      port: 5001
+    readiness_route:
+      path: /
+      port: 5001
+    scoring_route:
+      path: /score
+      port: 5001
+instance_type: Standard_DS2_v2
+instance_count: 1
