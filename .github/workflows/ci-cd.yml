@@ -103,7 +103,7 @@ jobs:
 
       - name: Déployer le Champion (modèle v1, stable)
         run: |
-          az ml online-deployment create \
+          az ml online-deployment update \
             --file deployment/deployment_champion.yaml \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
@@ -114,7 +114,7 @@ jobs:
 
       - name: Déployer le Challenger (modèle v2, issu du sweep)
         run: |
-          az ml online-deployment create \
+          az ml online-deployment update \
             --file deployment/deployment_challenger.yaml \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
