@@ -1,7 +1,7 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
-name: blue
+name: champion
 endpoint_name: california-housing-endpoint
-model: azureml:california-housing-model@latest
+model: azureml:california-housing-model:1
 environment:
   image: b2f79a6b7a564a19ab373ce9c22c2bc6.azurecr.io/california-housing-scoring:latest
   inference_config:
@@ -14,5 +14,7 @@ environment:
     scoring_route:
       path: /score
       port: 5001
+environment_variables:
+  DEPLOYMENT_NAME: champion
 instance_type: Standard_DS2_v2
 instance_count: 1

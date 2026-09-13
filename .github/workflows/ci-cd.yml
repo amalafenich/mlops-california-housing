@@ -72,8 +72,8 @@ jobs:
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
 
   # -----------------------------------------------------------------
-  # Étape 3 : Déploiement sur l'Azure Managed Online Endpoint
-  # Également sur le runner self-hosted, pour la même raison d'authentification.
+  # Étape 3 : Déploiement Champion + Challenger sur l'Azure Managed Online Endpoint
+  # (A/B testing) — sur le runner self-hosted, pour la même raison d'authentification.
   # -----------------------------------------------------------------
   deploy:
     needs: build-and-push
@@ -101,36 +101,88 @@ jobs:
             --workspace-name ${{ env.WORKSPACE_NAME }} \
             --auth-mode key
 
-      - name: Déployer la nouvelle version (Blue Deployment)
+      - name: Déployer le Champion (modèle v1, stable)
         run: |
           az ml online-deployment create \
-            --file deployment/deployment.yaml \
+            --file deployment/deployment_champion.yaml \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
             || az ml online-deployment update \
-            --file deployment/deployment.yaml \
+            --file deployment/deployment_champion.yaml \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }}
 
-      - name: Router 100% du trafic vers la nouvelle version
+      - name: Déployer le Challenger (modèle v2, issu du sweep)
+        run: |
+          az ml online-deployment create \
+            --file deployment/deployment_challenger.yaml \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            || az ml online-deployment update \
+            --file deployment/deployment_challenger.yaml \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }}
+
+      - name: Router le trafic (80% Champion / 20% Challenger)
         run: |
           az ml online-endpoint update --name ${{ env.ENDPOINT_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --traffic "blue=100"
+            --traffic "champion=80,challenger=20"
+
+  # -----------------------------------------------------------------
+  # Étape 4 : Test de l'endpoint — vérifie que l'API répond bien (code 200)
+  # et affiche plusieurs appels pour observer la répartition Champion/Challenger.
+  # -----------------------------------------------------------------
   test-endpoint:
     needs: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
-
+    env:
+      AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
     steps:
-      - name: Checkout du code
-        uses: actions/checkout@v4
-
-      - name: Tester l'endpoint Azure ML
+      - name: Récupérer l'URI de scoring et la clé de l'endpoint
+        id: endpoint_info
         run: |
-          az ml online-endpoint invoke \
-            --name ${{ env.ENDPOINT_NAME }} \
+          SCORING_URI=$(az ml online-endpoint show --name ${{ env.ENDPOINT_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --request-file sample-request.json
+            --query scoring_uri -o tsv)
+          KEY=$(az ml online-endpoint get-credentials --name ${{ env.ENDPOINT_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --workspace-name ${{ env.WORKSPACE_NAME }} \
+            --query primaryKey -o tsv)
+          echo "scoring_uri=$SCORING_URI" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Appeler l'endpoint avec une requête de test (vérifie le code 200)
+        run: |
+          PAYLOAD='{"data": [{"longitude": -122.23, "latitude": 37.88, "housing_median_age": 41, "total_rooms": 880, "total_bedrooms": 129, "population": 322, "households": 126, "median_income": 8.3}]}'
+
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
+            -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          echo "Code HTTP reçu : $HTTP_CODE"
+          echo "Réponse :"
+          cat response.json
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Échec : code HTTP $HTTP_CODE (attendu 200)"
+            exit 1
+          fi
+
+      - name: Appeler l'endpoint plusieurs fois pour observer le partage de trafic
+        run: |
+          PAYLOAD='{"data": [{"longitude": -122.23, "latitude": 37.88, "housing_median_age": 41, "total_rooms": 880, "total_bedrooms": 129, "population": 322, "households": 126, "median_income": 8.3}]}'
+
+          for i in $(seq 1 10); do
+            RESPONSE=$(curl -s -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
+              -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+            echo "Appel $i : $RESPONSE"
+          done
