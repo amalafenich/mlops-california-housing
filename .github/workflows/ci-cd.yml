@@ -50,18 +50,16 @@ steps:
 
 # ================================================================
 
-# ÉTAPE 2 : Build Docker + Push vers Azure Container Registry
+# ÉTAPE 2 : Build Docker + Push vers ACR
 
 # ================================================================
 
 build-and-push:
 needs: lint-test
-
-```
 if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
 runs-on: self-hosted
 
+```
 outputs:
   image_tag: ${{ steps.vars.outputs.image_tag }}
 
@@ -73,7 +71,7 @@ steps:
     run: |
       az acr login --name ${{ env.ACR_NAME }}
 
-  - name: Définir le tag de l'image avec le SHA du commit
+  - name: Définir le tag de l'image
     id: vars
     run: |
       echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
@@ -104,12 +102,10 @@ steps:
 
 deploy:
 needs: build-and-push
-
-```
 if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
 runs-on: self-hosted
 
+```
 env:
   AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
 
@@ -125,12 +121,9 @@ steps:
 
   - name: Afficher la version de l'image
     run: |
-      echo "Image Docker générée par le pipeline :"
+      echo "Image Docker générée :"
       echo "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
 
-  # ------------------------------------------------------------
-  # Création de l'endpoint s'il n'existe pas
-  # ------------------------------------------------------------
   - name: Vérifier ou créer l'endpoint Azure ML
     run: |
       if az ml online-endpoint show \
@@ -153,10 +146,6 @@ steps:
 
       fi
 
-  # ------------------------------------------------------------
-  # Déploiement du Champion
-  # Modèle Azure ML version 1
-  # ------------------------------------------------------------
   - name: Déployer le Champion
     run: |
       az ml online-deployment update \
@@ -164,10 +153,6 @@ steps:
         --resource-group ${{ env.RESOURCE_GROUP }} \
         --workspace-name ${{ env.WORKSPACE_NAME }}
 
-  # ------------------------------------------------------------
-  # Déploiement du Challenger
-  # Modèle Azure ML version 2
-  # ------------------------------------------------------------
   - name: Déployer le Challenger
     run: |
       az ml online-deployment update \
@@ -175,11 +160,6 @@ steps:
         --resource-group ${{ env.RESOURCE_GROUP }} \
         --workspace-name ${{ env.WORKSPACE_NAME }}
 
-  # ------------------------------------------------------------
-  # Configuration du trafic A/B
-  # Champion : 80 %
-  # Challenger : 20 %
-  # ------------------------------------------------------------
   - name: Configurer le trafic A/B
     run: |
       az ml online-endpoint update \
@@ -188,9 +168,6 @@ steps:
         --workspace-name ${{ env.WORKSPACE_NAME }} \
         --traffic "champion=80 challenger=20"
 
-  # ------------------------------------------------------------
-  # Vérification du trafic
-  # ------------------------------------------------------------
   - name: Vérifier la configuration du trafic
     run: |
       az ml online-endpoint show \
@@ -209,24 +186,17 @@ steps:
 
 test-endpoint:
 needs: deploy
-
-```
 if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
 runs-on: self-hosted
 
+```
 env:
   AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
 
 steps:
-
-  # ------------------------------------------------------------
-  # Récupération de l'URI et de la clé
-  # ------------------------------------------------------------
   - name: Récupérer les informations de l'endpoint
     id: endpoint_info
     run: |
-
       SCORING_URI=$(az ml online-endpoint show \
         --name ${{ env.ENDPOINT_NAME }} \
         --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -242,17 +212,11 @@ steps:
         -o tsv)
 
       echo "scoring_uri=$SCORING_URI" >> "$GITHUB_OUTPUT"
-
       echo "::add-mask::$KEY"
-
       echo "key=$KEY" >> "$GITHUB_OUTPUT"
 
-  # ------------------------------------------------------------
-  # Test API principal
-  # ------------------------------------------------------------
   - name: Tester l'API - Vérifier HTTP 200
     run: |
-
       PAYLOAD='{
         "data": [
           {
@@ -297,13 +261,8 @@ steps:
 
       echo "Test API réussi."
 
-  # ------------------------------------------------------------
-  # Test A/B
-  # 10 appels pour observer les réponses
-  # ------------------------------------------------------------
   - name: Tester la répartition du trafic A/B
     run: |
-
       PAYLOAD='{
         "data": [
           {
@@ -332,7 +291,6 @@ steps:
       echo "=========================================="
 
       for i in $(seq 1 10); do
-
         RESPONSE=$(curl -s \
           -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
           -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
@@ -340,7 +298,6 @@ steps:
           -d "$PAYLOAD")
 
         echo "Appel $i : $RESPONSE"
-
       done
 
       echo "=========================================="
