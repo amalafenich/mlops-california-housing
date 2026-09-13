@@ -128,7 +128,7 @@ jobs:
           az ml online-endpoint update --name ${{ env.ENDPOINT_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --traffic "champion=80,challenger=20"
+            --traffic "champion=80 challenger=20"
 
   # -----------------------------------------------------------------
   # Étape 4 : Test de l'endpoint — vérifie que l'API répond bien (code 200)
