@@ -1,188 +1,347 @@
 name: CI/CD - California Housing Model
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+push:
+branches: [main]
+pull_request:
+branches: [main]
 
 env:
-  ACR_NAME: b2f79a6b7a564a19ab373ce9c22c2bc6   # ACR déjà existant, créé par Azure ML
-  IMAGE_NAME: california-housing-scoring
-  RESOURCE_GROUP: afenichamal
-  WORKSPACE_NAME: ws-mlops-stage-amal
-  ENDPOINT_NAME: california-housing-endpoint
+ACR_NAME: b2f79a6b7a564a19ab373ce9c22c2bc6
+IMAGE_NAME: california-housing-scoring
+RESOURCE_GROUP: afenichamal
+WORKSPACE_NAME: ws-mlops-stage-amal
+ENDPOINT_NAME: california-housing-endpoint
 
 jobs:
-  # -----------------------------------------------------------------
-  # Étape 1 : Tests CI (linting + tests unitaires) — sur runner GitHub classique
-  # (pas besoin d'Azure ici, donc pas besoin du runner self-hosted)
-  # -----------------------------------------------------------------
-  lint-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout du code
-        uses: actions/checkout@v4
 
-      - name: Installer Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+# ================================================================
 
-      - name: Installer les dépendances de dev
-        run: pip install -r requirements-dev.txt
+# ÉTAPE 1 : CI - Linting + Tests unitaires
 
-      - name: Linting (flake8)
-        run: flake8 pipeline/ deployment/ tests/ --max-line-length=120 --extend-ignore=E402
+# ================================================================
 
-      - name: Tests unitaires (pytest)
-        run: pytest tests/ -v
+lint-test:
+runs-on: ubuntu-latest
 
-  # -----------------------------------------------------------------
-  # Étape 2 : Build de l'image Docker + Push vers Azure Container Registry
-  # Exécuté sur le RUNNER SELF-HOSTED (instance de calcul Azure ML),
-  # déjà authentifié via `az login` — pas besoin de secret Azure.
-  # -----------------------------------------------------------------
-  build-and-push:
-    needs: lint-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
-    outputs:
-      image_tag: ${{ steps.vars.outputs.image_tag }}
-    steps:
-      - name: Checkout du code
-        uses: actions/checkout@v4
+```
+steps:
+  - name: Checkout du code
+    uses: actions/checkout@v4
 
-      - name: Connexion à Azure Container Registry
-        run: az acr login --name ${{ env.ACR_NAME }}
+  - name: Installer Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.10"
 
-      - name: Définir le tag de l'image (SHA du commit)
-        id: vars
-        run: echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+  - name: Installer les dépendances de dev
+    run: pip install -r requirements-dev.txt
 
-      - name: Build de l'image Docker
-        run: |
-          docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }} \
-                       -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
-                       ./deployment
+  - name: Linting avec flake8
+    run: |
+      flake8 pipeline/ deployment/ tests/ \
+        --max-line-length=120 \
+        --extend-ignore=E402
 
-      - name: Push de l'image vers ACR
-        run: |
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+  - name: Tests unitaires avec pytest
+    run: pytest tests/ -v
+```
 
-  # -----------------------------------------------------------------
-  # Étape 3 : Déploiement Champion + Challenger sur l'Azure Managed Online Endpoint
-  # (A/B testing) — sur le runner self-hosted, pour la même raison d'authentification.
-  # -----------------------------------------------------------------
-  deploy:
-    needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
-    env:
-      # Évite le conflit de permissions sur le dossier système partagé
-      # /opt/az/extensions (accessible en écriture uniquement par root).
-      # Force Azure CLI à utiliser un dossier d'extensions propre à l'utilisateur.
-      AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
-    steps:
-      - name: Checkout du code
-        uses: actions/checkout@v4
+# ================================================================
 
-      - name: Vérifier/installer l'extension Azure ML CLI
-        run: az extension list -o table | grep -q '^ml ' || az extension add -n ml -y
+# ÉTAPE 2 : Build Docker + Push vers Azure Container Registry
 
-      - name: Créer l'endpoint (si inexistant)
-        run: |
-          az ml online-endpoint show --name ${{ env.ENDPOINT_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} || \
-          az ml online-endpoint create --name ${{ env.ENDPOINT_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --auth-mode key
+# ================================================================
 
-      - name: Déployer le Champion (modèle v1, stable)
-        run: |
-          az ml online-deployment update \
-            --file deployment/deployment_champion.yaml \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} \
-            || az ml online-deployment update \
-            --file deployment/deployment_champion.yaml \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }}
+build-and-push:
+needs: lint-test
 
-      - name: Déployer le Challenger (modèle v2, issu du sweep)
-        run: |
-          az ml online-deployment update \
-            --file deployment/deployment_challenger.yaml \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} \
-            || az ml online-deployment update \
-            --file deployment/deployment_challenger.yaml \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }}
+```
+if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
-      - name: Router le trafic (80% Champion / 20% Challenger)
-        run: |
-          az ml online-endpoint update --name ${{ env.ENDPOINT_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --traffic "champion=80 challenger=20"
+runs-on: self-hosted
 
-  # -----------------------------------------------------------------
-  # Étape 4 : Test de l'endpoint — vérifie que l'API répond bien (code 200)
-  # et affiche plusieurs appels pour observer la répartition Champion/Challenger.
-  # -----------------------------------------------------------------
-  test-endpoint:
-    needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
-    env:
-      AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
-    steps:
-      - name: Récupérer l'URI de scoring et la clé de l'endpoint
-        id: endpoint_info
-        run: |
-          SCORING_URI=$(az ml online-endpoint show --name ${{ env.ENDPOINT_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --query scoring_uri -o tsv)
-          KEY=$(az ml online-endpoint get-credentials --name ${{ env.ENDPOINT_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --workspace-name ${{ env.WORKSPACE_NAME }} \
-            --query primaryKey -o tsv)
-          echo "scoring_uri=$SCORING_URI" >> "$GITHUB_OUTPUT"
-          echo "::add-mask::$KEY"
-          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+outputs:
+  image_tag: ${{ steps.vars.outputs.image_tag }}
 
-      - name: Appeler l'endpoint avec une requête de test (vérifie le code 200)
-        run: |
-          PAYLOAD='{"data": [{"longitude": -122.23, "latitude": 37.88, "housing_median_age": 41, "total_rooms": 880, "total_bedrooms": 129, "population": 322, "households": 126, "median_income": 8.3}]}'
+steps:
+  - name: Checkout du code
+    uses: actions/checkout@v4
 
-          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
-            -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
-            -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
+  - name: Connexion à Azure Container Registry
+    run: |
+      az acr login --name ${{ env.ACR_NAME }}
 
-          echo "Code HTTP reçu : $HTTP_CODE"
-          echo "Réponse :"
-          cat response.json
+  - name: Définir le tag de l'image avec le SHA du commit
+    id: vars
+    run: |
+      echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "Échec : code HTTP $HTTP_CODE (attendu 200)"
-            exit 1
-          fi
+  - name: Build de l'image Docker
+    run: |
+      docker build \
+        -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }} \
+        -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+        ./deployment
 
-      - name: Appeler l'endpoint plusieurs fois pour observer le partage de trafic
-        run: |
-          PAYLOAD='{"data": [{"longitude": -122.23, "latitude": 37.88, "housing_median_age": 41, "total_rooms": 880, "total_bedrooms": 129, "population": 322, "households": 126, "median_income": 8.3}]}'
+  - name: Push de l'image versionnée
+    run: |
+      docker push \
+        ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
 
-          for i in $(seq 1 10); do
-            RESPONSE=$(curl -s -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
-              -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD")
-            echo "Appel $i : $RESPONSE"
-          done
+  - name: Push de l'image latest
+    run: |
+      docker push \
+        ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+```
+
+# ================================================================
+
+# ÉTAPE 3 : Déploiement Champion + Challenger
+
+# ================================================================
+
+deploy:
+needs: build-and-push
+
+```
+if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+runs-on: self-hosted
+
+env:
+  AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
+
+steps:
+  - name: Checkout du code
+    uses: actions/checkout@v4
+
+  - name: Vérifier l'extension Azure ML
+    run: |
+      if ! az extension list -o tsv --query "[?name=='ml'].name" | grep -q '^ml$'; then
+        az extension add -n ml -y
+      fi
+
+  - name: Afficher la version de l'image
+    run: |
+      echo "Image Docker utilisée :"
+      echo "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
+
+  # ------------------------------------------------------------
+  # Création de l'endpoint s'il n'existe pas
+  # ------------------------------------------------------------
+  - name: Vérifier ou créer l'endpoint Azure ML
+    run: |
+      if az ml online-endpoint show \
+        --name ${{ env.ENDPOINT_NAME }} \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        > /dev/null 2>&1; then
+
+        echo "Endpoint déjà existant."
+
+      else
+
+        echo "Endpoint inexistant. Création..."
+
+        az ml online-endpoint create \
+          --name ${{ env.ENDPOINT_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --workspace-name ${{ env.WORKSPACE_NAME }} \
+          --auth-mode key
+
+      fi
+
+  # ------------------------------------------------------------
+  # Déploiement du Champion
+  # ------------------------------------------------------------
+  - name: Déployer le Champion
+    run: |
+      az ml online-deployment update \
+        --file deployment/deployment_champion.yaml \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }}
+
+  # ------------------------------------------------------------
+  # Déploiement du Challenger
+  # ------------------------------------------------------------
+  - name: Déployer le Challenger
+    run: |
+      az ml online-deployment update \
+        --file deployment/deployment_challenger.yaml \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }}
+
+  # ------------------------------------------------------------
+  # Configuration du trafic A/B
+  # Champion : 80 %
+  # Challenger : 20 %
+  # ------------------------------------------------------------
+  - name: Configurer le trafic A/B
+    run: |
+      az ml online-endpoint update \
+        --name ${{ env.ENDPOINT_NAME }} \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        --traffic "champion=80 challenger=20"
+
+  # ------------------------------------------------------------
+  # Vérification du trafic
+  # ------------------------------------------------------------
+  - name: Vérifier la configuration du trafic
+    run: |
+      az ml online-endpoint show \
+        --name ${{ env.ENDPOINT_NAME }} \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        --query traffic \
+        -o json
+```
+
+# ================================================================
+
+# ÉTAPE 4 : Test de l'endpoint
+
+# ================================================================
+
+test-endpoint:
+needs: deploy
+
+```
+if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+runs-on: self-hosted
+
+env:
+  AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
+
+steps:
+
+  # ------------------------------------------------------------
+  # Récupération de l'URI et de la clé
+  # ------------------------------------------------------------
+  - name: Récupérer les informations de l'endpoint
+    id: endpoint_info
+    run: |
+
+      SCORING_URI=$(az ml online-endpoint show \
+        --name ${{ env.ENDPOINT_NAME }} \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        --query scoring_uri \
+        -o tsv)
+
+      KEY=$(az ml online-endpoint get-credentials \
+        --name ${{ env.ENDPOINT_NAME }} \
+        --resource-group ${{ env.RESOURCE_GROUP }} \
+        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        --query primaryKey \
+        -o tsv)
+
+      echo "scoring_uri=$SCORING_URI" >> "$GITHUB_OUTPUT"
+
+      echo "::add-mask::$KEY"
+
+      echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+  # ------------------------------------------------------------
+  # Test API principal
+  # ------------------------------------------------------------
+  - name: Tester l'API - Vérifier HTTP 200
+    run: |
+
+      PAYLOAD='{
+        "data": [
+          {
+            "longitude": -122.23,
+            "latitude": 37.88,
+            "housing_median_age": 41.0,
+            "total_rooms": 880.0,
+            "total_bedrooms": 129.0,
+            "population": 322.0,
+            "households": 126.0,
+            "median_income": 8.3252,
+            "rooms_per_household": 6.9841269841,
+            "bedrooms_per_room": 0.1465909091,
+            "population_per_household": 2.5555555556,
+            "ocean_proximity_INLAND": 1,
+            "ocean_proximity_ISLAND": 0,
+            "ocean_proximity_NEAR BAY": 0,
+            "ocean_proximity_NEAR OCEAN": 0
+          }
+        ]
+      }'
+
+      HTTP_CODE=$(curl -s \
+        -o response.json \
+        -w "%{http_code}" \
+        -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
+        -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD")
+
+      echo "=========================================="
+      echo "Code HTTP reçu : $HTTP_CODE"
+      echo "=========================================="
+
+      echo "Réponse de l'API :"
+      cat response.json
+
+      if [ "$HTTP_CODE" -ne 200 ]; then
+        echo "Échec : code HTTP $HTTP_CODE"
+        exit 1
+      fi
+
+      echo "Test API réussi."
+
+
+  # ------------------------------------------------------------
+  # Test A/B
+  # 10 appels pour observer les réponses
+  # ------------------------------------------------------------
+  - name: Tester la répartition du trafic A/B
+    run: |
+
+      PAYLOAD='{
+        "data": [
+          {
+            "longitude": -122.23,
+            "latitude": 37.88,
+            "housing_median_age": 41.0,
+            "total_rooms": 880.0,
+            "total_bedrooms": 129.0,
+            "population": 322.0,
+            "households": 126.0,
+            "median_income": 8.3252,
+            "rooms_per_household": 6.9841269841,
+            "bedrooms_per_room": 0.1465909091,
+            "population_per_household": 2.5555555556,
+            "ocean_proximity_INLAND": 1,
+            "ocean_proximity_ISLAND": 0,
+            "ocean_proximity_NEAR BAY": 0,
+            "ocean_proximity_NEAR OCEAN": 0
+          }
+        ]
+      }'
+
+      echo "=========================================="
+      echo "Tests A/B : 10 appels"
+      echo "Trafic configuré : Champion 80% / Challenger 20%"
+      echo "=========================================="
+
+      for i in $(seq 1 10); do
+
+        RESPONSE=$(curl -s \
+          -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
+          -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
+          -H "Content-Type: application/json" \
+          -d "$PAYLOAD")
+
+        echo "Appel $i : $RESPONSE"
+
+      done
+
+      echo "=========================================="
+      echo "Test A/B terminé."
+      echo "=========================================="
+```
