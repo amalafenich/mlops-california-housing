@@ -1,234 +1,176 @@
 name: CI/CD - California Housing Model
 
 on:
-push:
-branches: [main]
-pull_request:
-branches: [main]
-workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 env:
-ACR_NAME: b2f79a6b7a564a19ab373ce9c22c2bc6
-IMAGE_NAME: california-housing-scoring
-RESOURCE_GROUP: afenichamal
-WORKSPACE_NAME: ws-mlops-stage-amal
-ENDPOINT_NAME: california-housing-endpoint
+  ACR_NAME: b2f79a6b7a564a19ab373ce9c22c2bc6
+  IMAGE_NAME: california-housing-scoring
+  RESOURCE_GROUP: afenichamal
+  WORKSPACE_NAME: ws-mlops-stage-amal
+  ENDPOINT_NAME: california-housing-endpoint
 
 jobs:
+  lint-test:
+    runs-on: ubuntu-latest
 
-lint-test:
-runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-```
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-  - name: Setup Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
 
-  - name: Install dependencies
-    run: |
-      python -m pip install --upgrade pip
-      pip install -r requirements-dev.txt
+      - name: Lint
+        run: |
+          flake8 pipeline/ deployment/ tests/ --max-line-length=120 --extend-ignore=E402
 
-  - name: Lint
-    run: |
-      flake8 pipeline/ deployment/ tests/ --max-line-length=120 --extend-ignore=E402
+      - name: Tests
+        run: |
+          pytest tests/ -v
 
-  - name: Tests
-    run: |
-      pytest tests/ -v
-```
+  build-and-push:
+    needs: lint-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
 
-build-and-push:
-needs: lint-test
-if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-runs-on: self-hosted
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
 
-```
-outputs:
-  image_tag: ${{ steps.vars.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name "$ACR_NAME"
 
-  - name: Login to Azure Container Registry
-    run: |
-      az acr login --name "$ACR_NAME"
+      - name: Set image tag
+        id: vars
+        run: |
+          echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-  - name: Set image tag
-    id: vars
-    run: |
-      echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+      - name: Build Docker image
+        run: |
+          docker build             -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}"             -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"             ./deployment
 
-  - name: Build Docker image
-    run: |
-      docker build \
-        -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}" \
-        -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest" \
-        ./deployment
+      - name: Push Docker images
+        run: |
+          docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}"
+          docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
 
-  - name: Push Docker images
-    run: |
-      docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}"
-      docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
-```
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
 
-deploy:
-needs: build-and-push
-if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-runs-on: self-hosted
-
-```
-env:
-  AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
-
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
-
-  - name: Ensure ML extension
-    run: |
-      if ! az extension show --name ml >/dev/null 2>&1; then
-        az extension add --name ml
-      fi
-
-  - name: Show image
-    run: |
-      echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
-      echo "Image: $ACR_NAME.azurecr.io/$IMAGE_NAME:${{ needs.build-and-push.outputs.image_tag }}"
-
-  - name: Check endpoint
-    run: |
-      az ml online-endpoint show \
-        --name "$ENDPOINT_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        >/dev/null 2>&1 || true
-
-  - name: Create endpoint if needed
-    run: |
-      if ! az ml online-endpoint show \
-        --name "$ENDPOINT_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        >/dev/null 2>&1; then
-
-        az ml online-endpoint create \
-          --name "$ENDPOINT_NAME" \
-          --resource-group "$RESOURCE_GROUP" \
-          --workspace-name "$WORKSPACE_NAME" \
-          --auth-mode key
-      fi
-
-  - name: Deploy champion
-    run: |
-      az ml online-deployment create \
-        --file deployment/deployment_champion.yaml \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        --all-traffic
-
-  - name: Deploy challenger
-    run: |
-      az ml online-deployment create \
-        --file deployment/deployment_challenger.yaml \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME"
-
-  - name: Configure A/B traffic
-    run: |
-      az ml online-endpoint update \
-        --name "$ENDPOINT_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        --traffic champion=80 challenger=20
-
-  - name: Show traffic
-    run: |
-      az ml online-endpoint show \
-        --name "$ENDPOINT_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        --query traffic \
-        -o json
-```
-
-test-endpoint:
-needs: deploy
-if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-runs-on: self-hosted
-
-```
-env:
-  AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
-
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
-
-  - name: Get endpoint URI
-    id: endpoint
-    run: |
-      URI=$(az ml online-endpoint show \
-        --name "$ENDPOINT_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        --query scoring_uri \
-        -o tsv)
-
-      echo "uri=$URI" >> "$GITHUB_OUTPUT"
-
-  - name: Get endpoint key
-    id: key
-    run: |
-      KEY=$(az ml online-endpoint get-credentials \
-        --name "$ENDPOINT_NAME" \
-        --resource-group "$RESOURCE_GROUP" \
-        --workspace-name "$WORKSPACE_NAME" \
-        --query primaryKey \
-        -o tsv)
-
-      echo "::add-mask::$KEY"
-      echo "key=$KEY" >> "$GITHUB_OUTPUT"
-
-  - name: Test endpoint
     env:
-      ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
-      ENDPOINT_KEY: ${{ steps.key.outputs.key }}
-    run: |
-      HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
-        -X POST "$ENDPOINT_URI" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $ENDPOINT_KEY" \
-        --data @sample-request.json)
+      AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
 
-      echo "HTTP status: $HTTP_CODE"
-      cat response.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      if [ "$HTTP_CODE" != "200" ]; then
-        echo "Endpoint test failed"
-        exit 1
-      fi
+      - name: Ensure ML extension
+        run: |
+          if ! az extension show --name ml >/dev/null 2>&1; then
+            az extension add --name ml
+          fi
 
-  - name: A/B test
+      - name: Show image
+        run: |
+          echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "Image: $ACR_NAME.azurecr.io/$IMAGE_NAME:${{ needs.build-and-push.outputs.image_tag }}"
+
+      - name: Check endpoint
+        run: |
+          az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             >/dev/null 2>&1 || true
+
+      - name: Create endpoint if needed
+        run: |
+          if ! az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             >/dev/null 2>&1; then
+
+            az ml online-endpoint create               --name "$ENDPOINT_NAME"               --resource-group "$RESOURCE_GROUP"               --workspace-name "$WORKSPACE_NAME"               --auth-mode key
+          fi
+
+      - name: Deploy champion
+        run: |
+          az ml online-deployment create             --file deployment/deployment_champion.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --all-traffic
+
+      - name: Deploy challenger
+        run: |
+          az ml online-deployment create             --file deployment/deployment_challenger.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"
+
+      - name: Configure A/B traffic
+        run: |
+          az ml online-endpoint update             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --traffic champion=80 challenger=20
+
+      - name: Show traffic
+        run: |
+          az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --query traffic             -o json
+
+  test-endpoint:
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+
     env:
-      ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
-      ENDPOINT_KEY: ${{ steps.key.outputs.key }}
-    run: |
-      for i in {1..10}; do
-        echo "Request $i"
+      AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
 
-        curl -s \
-          -X POST "$ENDPOINT_URI" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer $ENDPOINT_KEY" \
-          --data @sample-request.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-        echo
-      done
-```
+      - name: Get endpoint URI
+        id: endpoint
+        run: |
+          URI=$(az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --query scoring_uri             -o tsv)
+
+          echo "uri=$URI" >> "$GITHUB_OUTPUT"
+
+      - name: Get endpoint key
+        id: key
+        run: |
+          KEY=$(az ml online-endpoint get-credentials             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --query primaryKey             -o tsv)
+
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Test endpoint
+        env:
+          ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
+          ENDPOINT_KEY: ${{ steps.key.outputs.key }}
+        run: |
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}"             -X POST "$ENDPOINT_URI"             -H "Content-Type: application/json"             -H "Authorization: Bearer $ENDPOINT_KEY"             --data @sample-request.json)
+
+          echo "HTTP status: $HTTP_CODE"
+          cat response.json
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Endpoint test failed"
+            exit 1
+          fi
+
+      - name: A/B test
+        env:
+          ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
+          ENDPOINT_KEY: ${{ steps.key.outputs.key }}
+        run: |
+          for i in {1..10}; do
+            echo "Request $i"
+
+            curl -s               -X POST "$ENDPOINT_URI"               -H "Content-Type: application/json"               -H "Authorization: Bearer $ENDPOINT_KEY"               --data @sample-request.json
+
+            echo
+          done
