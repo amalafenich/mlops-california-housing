@@ -114,7 +114,7 @@ jobs:
 
       - name: Configure A/B traffic
         run: |
-          az ml online-endpoint update             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --traffic champion=80 challenger=20
+          az ml online-endpoint update             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --traffic "champion=80 challenger=20"
 
       - name: Show traffic
         run: |
