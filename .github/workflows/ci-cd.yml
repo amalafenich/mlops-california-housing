@@ -106,11 +106,11 @@ jobs:
 
       - name: Deploy champion
         run: |
-          az ml online-deployment create             --file deployment/deployment_champion.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --all-traffic
+          az ml online-deployment update             --file deployment/deployment_champion.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --all-traffic
 
       - name: Deploy challenger
         run: |
-          az ml online-deployment create             --file deployment/deployment_challenger.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"
+          az ml online-deployment update            --file deployment/deployment_challenger.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"
 
       - name: Configure A/B traffic
         run: |
