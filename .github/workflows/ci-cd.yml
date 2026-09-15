@@ -16,43 +16,32 @@ ENDPOINT_NAME: california-housing-endpoint
 
 jobs:
 
-# ================================================================
-
-# ÉTAPE 1 : CI - Linting + Tests unitaires
-
-# ================================================================
-
 lint-test:
 runs-on: ubuntu-latest
 
 ```
 steps:
-  - name: Checkout du code
+  - name: Checkout
     uses: actions/checkout@v4
 
-  - name: Installer Python
+  - name: Setup Python
     uses: actions/setup-python@v5
     with:
       python-version: "3.10"
 
-  - name: Installer les dépendances de dev
-    run: pip install -r requirements-dev.txt
-
-  - name: Linting avec flake8
+  - name: Install dependencies
     run: |
-      flake8 pipeline/ deployment/ tests/ \
-        --max-line-length=120 \
-        --extend-ignore=E402
+      python -m pip install --upgrade pip
+      pip install -r requirements-dev.txt
 
-  - name: Tests unitaires avec pytest
-    run: pytest tests/ -v
+  - name: Lint
+    run: |
+      flake8 pipeline/ deployment/ tests/ --max-line-length=120 --extend-ignore=E402
+
+  - name: Tests
+    run: |
+      pytest tests/ -v
 ```
-
-# ================================================================
-
-# ÉTAPE 2 : Build Docker + Push vers ACR
-
-# ================================================================
 
 build-and-push:
 needs: lint-test
@@ -64,41 +53,30 @@ outputs:
   image_tag: ${{ steps.vars.outputs.image_tag }}
 
 steps:
-  - name: Checkout du code
+  - name: Checkout
     uses: actions/checkout@v4
 
-  - name: Connexion à Azure Container Registry
+  - name: Login to Azure Container Registry
     run: |
-      az acr login --name ${{ env.ACR_NAME }}
+      az acr login --name "$ACR_NAME"
 
-  - name: Définir le tag de l'image
+  - name: Set image tag
     id: vars
     run: |
       echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-  - name: Build de l'image Docker
+  - name: Build Docker image
     run: |
       docker build \
-        -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }} \
-        -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+        -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}" \
+        -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest" \
         ./deployment
 
-  - name: Push de l'image versionnée
+  - name: Push Docker images
     run: |
-      docker push \
-        ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
-
-  - name: Push de l'image latest
-    run: |
-      docker push \
-        ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+      docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}"
+      docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
 ```
-
-# ================================================================
-
-# ÉTAPE 3 : Déploiement Champion + Challenger
-
-# ================================================================
 
 deploy:
 needs: build-and-push
@@ -110,79 +88,75 @@ env:
   AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
 
 steps:
-  - name: Checkout du code
+  - name: Checkout
     uses: actions/checkout@v4
 
-  - name: Vérifier l'extension Azure ML
+  - name: Ensure ML extension
     run: |
-      if ! az extension list -o tsv --query "[?name=='ml'].name" | grep -q '^ml$'; then
-        az extension add -n ml -y
+      if ! az extension show --name ml >/dev/null 2>&1; then
+        az extension add --name ml
       fi
 
-  - name: Afficher la version de l'image
+  - name: Show image
     run: |
-      echo "Image Docker générée :"
-      echo "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
+      echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
+      echo "Image: $ACR_NAME.azurecr.io/$IMAGE_NAME:${{ needs.build-and-push.outputs.image_tag }}"
 
-  - name: Vérifier ou créer l'endpoint Azure ML
-    run: |
-      if az ml online-endpoint show \
-        --name ${{ env.ENDPOINT_NAME }} \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }} \
-        > /dev/null 2>&1; then
-
-        echo "Endpoint déjà existant."
-
-      else
-
-        echo "Endpoint inexistant. Création..."
-
-        az ml online-endpoint create \
-          --name ${{ env.ENDPOINT_NAME }} \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --workspace-name ${{ env.WORKSPACE_NAME }} \
-          --auth-mode key
-
-      fi
-
-  - name: Déployer le Champion
-    run: |
-      az ml online-deployment update \
-        --file deployment/deployment_champion.yaml \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }}
-
-  - name: Déployer le Challenger
-    run: |
-      az ml online-deployment update \
-        --file deployment/deployment_challenger.yaml \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }}
-
-  - name: Configurer le trafic A/B
-    run: |
-      az ml online-endpoint update \
-        --name ${{ env.ENDPOINT_NAME }} \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }} \
-        --traffic "champion=80 challenger=20"
-
-  - name: Vérifier la configuration du trafic
+  - name: Check endpoint
     run: |
       az ml online-endpoint show \
-        --name ${{ env.ENDPOINT_NAME }} \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        --name "$ENDPOINT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
+        >/dev/null 2>&1 || true
+
+  - name: Create endpoint if needed
+    run: |
+      if ! az ml online-endpoint show \
+        --name "$ENDPOINT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
+        >/dev/null 2>&1; then
+
+        az ml online-endpoint create \
+          --name "$ENDPOINT_NAME" \
+          --resource-group "$RESOURCE_GROUP" \
+          --workspace-name "$WORKSPACE_NAME" \
+          --auth-mode key
+      fi
+
+  - name: Deploy champion
+    run: |
+      az ml online-deployment create \
+        --file deployment/deployment_champion.yaml \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
+        --all-traffic
+
+  - name: Deploy challenger
+    run: |
+      az ml online-deployment create \
+        --file deployment/deployment_challenger.yaml \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME"
+
+  - name: Configure A/B traffic
+    run: |
+      az ml online-endpoint update \
+        --name "$ENDPOINT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
+        --traffic champion=80 challenger=20
+
+  - name: Show traffic
+    run: |
+      az ml online-endpoint show \
+        --name "$ENDPOINT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
         --query traffic \
         -o json
 ```
-
-# ================================================================
-
-# ÉTAPE 4 : Test de l'endpoint
-
-# ================================================================
 
 test-endpoint:
 needs: deploy
@@ -194,113 +168,67 @@ env:
   AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
 
 steps:
-  - name: Récupérer les informations de l'endpoint
-    id: endpoint_info
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Get endpoint URI
+    id: endpoint
     run: |
-      SCORING_URI=$(az ml online-endpoint show \
-        --name ${{ env.ENDPOINT_NAME }} \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }} \
+      URI=$(az ml online-endpoint show \
+        --name "$ENDPOINT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
         --query scoring_uri \
         -o tsv)
 
+      echo "uri=$URI" >> "$GITHUB_OUTPUT"
+
+  - name: Get endpoint key
+    id: key
+    run: |
       KEY=$(az ml online-endpoint get-credentials \
-        --name ${{ env.ENDPOINT_NAME }} \
-        --resource-group ${{ env.RESOURCE_GROUP }} \
-        --workspace-name ${{ env.WORKSPACE_NAME }} \
+        --name "$ENDPOINT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --workspace-name "$WORKSPACE_NAME" \
         --query primaryKey \
         -o tsv)
 
-      echo "scoring_uri=$SCORING_URI" >> "$GITHUB_OUTPUT"
       echo "::add-mask::$KEY"
       echo "key=$KEY" >> "$GITHUB_OUTPUT"
 
-  - name: Tester l'API - Vérifier HTTP 200
+  - name: Test endpoint
+    env:
+      ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
+      ENDPOINT_KEY: ${{ steps.key.outputs.key }}
     run: |
-      PAYLOAD='{
-        "data": [
-          {
-            "longitude": -122.23,
-            "latitude": 37.88,
-            "housing_median_age": 41.0,
-            "total_rooms": 880.0,
-            "total_bedrooms": 129.0,
-            "population": 322.0,
-            "households": 126.0,
-            "median_income": 8.3252,
-            "rooms_per_household": 6.9841269841,
-            "bedrooms_per_room": 0.1465909091,
-            "population_per_household": 2.5555555556,
-            "ocean_proximity_INLAND": 1,
-            "ocean_proximity_ISLAND": 0,
-            "ocean_proximity_NEAR BAY": 0,
-            "ocean_proximity_NEAR OCEAN": 0
-          }
-        ]
-      }'
-
-      HTTP_CODE=$(curl -s \
-        -o response.json \
-        -w "%{http_code}" \
-        -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
-        -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
+      HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+        -X POST "$ENDPOINT_URI" \
         -H "Content-Type: application/json" \
-        -d "$PAYLOAD")
+        -H "Authorization: Bearer $ENDPOINT_KEY" \
+        --data @sample-request.json)
 
-      echo "=========================================="
-      echo "Code HTTP reçu : $HTTP_CODE"
-      echo "=========================================="
-
-      echo "Réponse de l'API :"
+      echo "HTTP status: $HTTP_CODE"
       cat response.json
 
-      if [ "$HTTP_CODE" -ne 200 ]; then
-        echo "Échec : code HTTP $HTTP_CODE"
+      if [ "$HTTP_CODE" != "200" ]; then
+        echo "Endpoint test failed"
         exit 1
       fi
 
-      echo "Test API réussi."
-
-  - name: Tester la répartition du trafic A/B
+  - name: A/B test
+    env:
+      ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
+      ENDPOINT_KEY: ${{ steps.key.outputs.key }}
     run: |
-      PAYLOAD='{
-        "data": [
-          {
-            "longitude": -122.23,
-            "latitude": 37.88,
-            "housing_median_age": 41.0,
-            "total_rooms": 880.0,
-            "total_bedrooms": 129.0,
-            "population": 322.0,
-            "households": 126.0,
-            "median_income": 8.3252,
-            "rooms_per_household": 6.9841269841,
-            "bedrooms_per_room": 0.1465909091,
-            "population_per_household": 2.5555555556,
-            "ocean_proximity_INLAND": 1,
-            "ocean_proximity_ISLAND": 0,
-            "ocean_proximity_NEAR BAY": 0,
-            "ocean_proximity_NEAR OCEAN": 0
-          }
-        ]
-      }'
+      for i in {1..10}; do
+        echo "Request $i"
 
-      echo "=========================================="
-      echo "Tests A/B : 10 appels"
-      echo "Trafic configuré : Champion 80% / Challenger 20%"
-      echo "=========================================="
-
-      for i in $(seq 1 10); do
-        RESPONSE=$(curl -s \
-          -X POST "${{ steps.endpoint_info.outputs.scoring_uri }}" \
-          -H "Authorization: Bearer ${{ steps.endpoint_info.outputs.key }}" \
+        curl -s \
+          -X POST "$ENDPOINT_URI" \
           -H "Content-Type: application/json" \
-          -d "$PAYLOAD")
+          -H "Authorization: Bearer $ENDPOINT_KEY" \
+          --data @sample-request.json
 
-        echo "Appel $i : $RESPONSE"
+        echo
       done
-
-      echo "=========================================="
-      echo "Test A/B terminé."
-      echo "=========================================="
 ```
