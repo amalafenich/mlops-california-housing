@@ -145,7 +145,6 @@ jobs:
             --file deployment/deployment_champion.yaml \
             --resource-group "$RESOURCE_GROUP" \
             --workspace-name "$WORKSPACE_NAME" \
-            --all-traffic
 
       # Quand le CD est déclenché par l'enregistrement d'un modèle, la version
       # qui vient d'être enregistrée devient automatiquement le Challenger.
