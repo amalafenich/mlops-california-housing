@@ -141,7 +141,7 @@ jobs:
 
       - name: Deploy champion
         run: |
-          az ml online-deployment create \
+          az ml online-deployment update \
             --file deployment/deployment_champion.yaml \
             --resource-group "$RESOURCE_GROUP" \
             --workspace-name "$WORKSPACE_NAME" \
