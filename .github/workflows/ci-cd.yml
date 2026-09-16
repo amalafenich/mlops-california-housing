@@ -1,10 +1,20 @@
 name: CI/CD - California Housing Model
 
 on:
+  # --- CI : validation du code à chaque push et pull request ---
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+  # --- CD : déclenché par l'enregistrement d'un nouveau modèle ---
+  # L'étape register.py du pipeline d'entraînement Azure ML envoie un
+  # repository_dispatch de type "model-registered" après avoir enregistré
+  # une nouvelle version dans le Model Registry.
+  repository_dispatch:
+    types: [model-registered]
+
+  # --- Déclenchement manuel (démonstration / rattrapage) ---
   workflow_dispatch:
 
 env:
@@ -15,9 +25,11 @@ env:
   ENDPOINT_NAME: california-housing-endpoint
 
 jobs:
+  # =================================================================
+  # CI — s'exécute sur tous les déclencheurs
+  # =================================================================
   lint-test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,17 +52,30 @@ jobs:
         run: |
           pytest tests/ -v
 
+  # =================================================================
+  # CD — build, déploiement et test de l'endpoint
+  # Déclenché par l'enregistrement d'un modèle (repository_dispatch),
+  # par un push sur main, ou manuellement.
+  # =================================================================
   build-and-push:
     needs: lint-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     runs-on: self-hosted
-
     outputs:
       image_tag: ${{ steps.vars.outputs.image_tag }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Afficher l'origine du déclenchement
+        run: |
+          echo "Déclencheur : ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "Modèle enregistré : ${{ github.event.client_payload.model_name }}"
+            echo "Version : ${{ github.event.client_payload.model_version }}"
+            echo "R2 : ${{ github.event.client_payload.r2_score }}"
+            echo "RMSE : ${{ github.event.client_payload.rmse }}"
+          fi
 
       - name: Login to Azure Container Registry
         run: |
@@ -63,7 +88,10 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build             -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}"             -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"             ./deployment
+          docker build \
+            -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:${GITHUB_SHA::8}" \
+            -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest" \
+            ./deployment
 
       - name: Push Docker images
         run: |
@@ -72,12 +100,10 @@ jobs:
 
   deploy:
     needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     runs-on: self-hosted
-
     env:
       AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,46 +114,74 @@ jobs:
             az extension add --name ml
           fi
 
-      - name: Show image
-        run: |
-          echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
-          echo "Image: $ACR_NAME.azurecr.io/$IMAGE_NAME:${{ needs.build-and-push.outputs.image_tag }}"
-
-      - name: Check endpoint
-        run: |
-          az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             >/dev/null 2>&1 || true
-
       - name: Create endpoint if needed
         run: |
-          if ! az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             >/dev/null 2>&1; then
+          if ! az ml online-endpoint show \
+            --name "$ENDPOINT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            >/dev/null 2>&1; then
 
-            az ml online-endpoint create               --name "$ENDPOINT_NAME"               --resource-group "$RESOURCE_GROUP"               --workspace-name "$WORKSPACE_NAME"               --auth-mode key
+            az ml online-endpoint create \
+              --name "$ENDPOINT_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --workspace-name "$WORKSPACE_NAME" \
+              --auth-mode key
           fi
 
       - name: Deploy champion
         run: |
-          az ml online-deployment update             --file deployment/deployment_champion.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"            
+          az ml online-deployment create \
+            --file deployment/deployment_champion.yaml \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --all-traffic
 
+      # Quand le CD est déclenché par l'enregistrement d'un modèle, la version
+      # qui vient d'être enregistrée devient automatiquement le Challenger.
+      # Sur les autres déclencheurs, on garde la version du fichier YAML.
       - name: Deploy challenger
         run: |
-          az ml online-deployment update            --file deployment/deployment_challenger.yaml             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"
+          NEW_VERSION="${{ github.event.client_payload.model_version }}"
+
+          if [ -n "$NEW_VERSION" ]; then
+            echo "Challenger = version $NEW_VERSION (nouvellement enregistrée)"
+            az ml online-deployment create \
+              --file deployment/deployment_challenger.yaml \
+              --resource-group "$RESOURCE_GROUP" \
+              --workspace-name "$WORKSPACE_NAME" \
+              --set model="azureml:california-housing-model:$NEW_VERSION"
+          else
+            echo "Challenger = version définie dans deployment_challenger.yaml"
+            az ml online-deployment create \
+              --file deployment/deployment_challenger.yaml \
+              --resource-group "$RESOURCE_GROUP" \
+              --workspace-name "$WORKSPACE_NAME"
+          fi
 
       - name: Configure A/B traffic
         run: |
-          az ml online-endpoint update             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --traffic "champion=80 challenger=20"
+          az ml online-endpoint update \
+            --name "$ENDPOINT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --traffic champion=80 challenger=20
 
       - name: Show traffic
         run: |
-          az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --query traffic             -o json
+          az ml online-endpoint show \
+            --name "$ENDPOINT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --query traffic \
+            -o json
 
   test-endpoint:
     needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     runs-on: self-hosted
-
     env:
       AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -135,14 +189,24 @@ jobs:
       - name: Get endpoint URI
         id: endpoint
         run: |
-          URI=$(az ml online-endpoint show             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --query scoring_uri             -o tsv)
+          URI=$(az ml online-endpoint show \
+            --name "$ENDPOINT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --query scoring_uri \
+            -o tsv)
 
           echo "uri=$URI" >> "$GITHUB_OUTPUT"
 
       - name: Get endpoint key
         id: key
         run: |
-          KEY=$(az ml online-endpoint get-credentials             --name "$ENDPOINT_NAME"             --resource-group "$RESOURCE_GROUP"             --workspace-name "$WORKSPACE_NAME"             --query primaryKey             -o tsv)
+          KEY=$(az ml online-endpoint get-credentials \
+            --name "$ENDPOINT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --query primaryKey \
+            -o tsv)
 
           echo "::add-mask::$KEY"
           echo "key=$KEY" >> "$GITHUB_OUTPUT"
@@ -152,7 +216,11 @@ jobs:
           ENDPOINT_URI: ${{ steps.endpoint.outputs.uri }}
           ENDPOINT_KEY: ${{ steps.key.outputs.key }}
         run: |
-          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}"             -X POST "$ENDPOINT_URI"             -H "Content-Type: application/json"             -H "Authorization: Bearer $ENDPOINT_KEY"             --data @sample-request.json)
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST "$ENDPOINT_URI" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ENDPOINT_KEY" \
+            --data @sample-request.json)
 
           echo "HTTP status: $HTTP_CODE"
           cat response.json
@@ -170,7 +238,11 @@ jobs:
           for i in {1..10}; do
             echo "Request $i"
 
-            curl -s               -X POST "$ENDPOINT_URI"               -H "Content-Type: application/json"               -H "Authorization: Bearer $ENDPOINT_KEY"               --data @sample-request.json
+            curl -s \
+              -X POST "$ENDPOINT_URI" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $ENDPOINT_KEY" \
+              --data @sample-request.json
 
             echo
           done
