@@ -25,11 +25,9 @@ env:
   ENDPOINT_NAME: california-housing-endpoint
 
 jobs:
-  # =================================================================
-  # CI — s'exécute sur tous les déclencheurs
-  # =================================================================
   lint-test:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,17 +50,14 @@ jobs:
         run: |
           pytest tests/ -v
 
-  # =================================================================
-  # CD — build, déploiement et test de l'endpoint
-  # Déclenché par l'enregistrement d'un modèle (repository_dispatch),
-  # par un push sur main, ou manuellement.
-  # =================================================================
   build-and-push:
     needs: lint-test
     if: github.event_name != 'pull_request'
     runs-on: self-hosted
+
     outputs:
       image_tag: ${{ steps.vars.outputs.image_tag }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,8 +97,10 @@ jobs:
     needs: build-and-push
     if: github.event_name != 'pull_request'
     runs-on: self-hosted
+
     env:
       AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -113,6 +110,19 @@ jobs:
           if ! az extension show --name ml >/dev/null 2>&1; then
             az extension add --name ml
           fi
+
+      - name: Show image
+        run: |
+          echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "Image: $ACR_NAME.azurecr.io/$IMAGE_NAME:${{ needs.build-and-push.outputs.image_tag }}"
+
+      - name: Check endpoint
+        run: |
+          az ml online-endpoint show \
+            --name "$ENDPOINT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            >/dev/null 2>&1 || true
 
       - name: Create endpoint if needed
         run: |
@@ -180,8 +190,10 @@ jobs:
     needs: deploy
     if: github.event_name != 'pull_request'
     runs-on: self-hosted
+
     env:
       AZURE_EXTENSION_DIR: /home/azureuser/.azure/cliextensions
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
