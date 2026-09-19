@@ -171,7 +171,7 @@ jobs:
             --name "$ENDPOINT_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --workspace-name "$WORKSPACE_NAME" \
-            --traffic champion=80 challenger=20
+            --traffic "champion=80 challenger=20"
 
       - name: Show traffic
         run: |

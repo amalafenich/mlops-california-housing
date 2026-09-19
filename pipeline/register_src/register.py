@@ -24,11 +24,21 @@ def trigger_github_cd(model_name, model_version, metrics):
     """Notifie GitHub Actions qu'un nouveau modèle vient d'être enregistré.
 
     Utilise l'événement repository_dispatch de l'API GitHub. Le token et le
-    dépôt sont lus depuis les variables d'environnement du job ; si elles sont
-    absentes, on n'échoue pas le pipeline, on se contente d'avertir.
+    dépôt sont lus depuis les variables d'environnement du job (par leur NOM,
+    pas par leur valeur) ; si elles sont absentes, on n'échoue pas le
+    pipeline, on se contente d'avertir.
     """
-    token = os.getenv("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")
-    repo = os.getenv("amalafenich/mlops-california-housing")  # ex: "amalafenich/mlops-california-housing"
+    token = os.getenv("GH_DISPATCH_TOKEN")
+    repo = os.getenv("GH_REPOSITORY")
+
+    # --- DIAGNOSTIC TEMPORAIRE (à retirer une fois le problème résolu) ---
+    print(f"[DEBUG] GH_REPOSITORY reçu : {repo!r}")
+    if not token:
+        print("[DEBUG] GH_DISPATCH_TOKEN reçu : (vide ou absent)")
+    else:
+        print(f"[DEBUG] GH_DISPATCH_TOKEN reçu : {len(token)} caractères, "
+              f"commence par {token[:12]}...")
+    # --- Fin du diagnostic ---
 
     if not token or not repo:
         print("GH_DISPATCH_TOKEN ou GH_REPOSITORY absent : "
@@ -111,7 +121,6 @@ def main():
     print(f"Modèle enregistré : {model_version.name}, "
           f"version {model_version.version}")
 
-    # L'enregistrement vient d'aboutir : on déclenche le pipeline CD.
     trigger_github_cd(model_version.name, model_version.version, metrics)
 
 
