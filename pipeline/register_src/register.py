@@ -27,8 +27,8 @@ def trigger_github_cd(model_name, model_version, metrics):
     dépôt sont lus depuis les variables d'environnement du job ; si elles sont
     absentes, on n'échoue pas le pipeline, on se contente d'avertir.
     """
-    token = os.getenv("GH_DISPATCH_TOKEN")
-    repo = os.getenv("GH_REPOSITORY")  # ex: "amalafenich/mlops-california-housing"
+    token = os.getenv("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")
+    repo = os.getenv("amalafenich/mlops-california-housing")  # ex: "amalafenich/mlops-california-housing"
 
     if not token or not repo:
         print("GH_DISPATCH_TOKEN ou GH_REPOSITORY absent : "

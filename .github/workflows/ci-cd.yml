@@ -1,21 +1,17 @@
 name: CI/CD - California Housing Model
 
 on:
-  # --- CI : validation du code à chaque push et pull request ---
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
-  # --- CD : déclenché par l'enregistrement d'un nouveau modèle ---
-  # L'étape register.py du pipeline d'entraînement Azure ML envoie un
-  # repository_dispatch de type "model-registered" après avoir enregistré
-  # une nouvelle version dans le Model Registry.
+  workflow_dispatch:
+  # CD déclenché par l'enregistrement d'un nouveau modèle : register.py
+  # (étape finale du pipeline d'entraînement Azure ML) envoie un
+  # repository_dispatch de type "model-registered" une fois le modèle
+  # enregistré dans le Model Registry.
   repository_dispatch:
     types: [model-registered]
-
-  # --- Déclenchement manuel (démonstration / rattrapage) ---
-  workflow_dispatch:
 
 env:
   ACR_NAME: b2f79a6b7a564a19ab373ce9c22c2bc6
@@ -144,11 +140,12 @@ jobs:
           az ml online-deployment update \
             --file deployment/deployment_champion.yaml \
             --resource-group "$RESOURCE_GROUP" \
-            --workspace-name "$WORKSPACE_NAME" \
+            --workspace-name "$WORKSPACE_NAME"
 
       # Quand le CD est déclenché par l'enregistrement d'un modèle, la version
       # qui vient d'être enregistrée devient automatiquement le Challenger.
-      # Sur les autres déclencheurs, on garde la version du fichier YAML.
+      # Sur les autres déclencheurs (push, workflow_dispatch), on garde la
+      # version définie dans deployment_challenger.yaml.
       - name: Deploy challenger
         run: |
           NEW_VERSION="${{ github.event.client_payload.model_version }}"
@@ -174,7 +171,7 @@ jobs:
             --name "$ENDPOINT_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --workspace-name "$WORKSPACE_NAME" \
-            --traffic "champion=80 challenger=20"
+            --traffic champion=80 challenger=20
 
       - name: Show traffic
         run: |
