@@ -1,0 +1,31 @@
+# Environnement d'entraînement figé pour le pipeline California Housing.
+#
+# Versions alignées explicitement sur celles réellement utilisées et
+# validées dans l'environnement curaté Azure ML "sklearn-1.5" — confirmées
+# par le fichier conda.yaml généré automatiquement par
+# mlflow.sklearn.save_model() lors de l'enregistrement du modèle
+# (pas des suppositions : ce sont les versions exactes qui tournent déjà
+# en production dans ce projet). Cela répond à l'US 2.2 du cahier des
+# charges et prévient le Bug 1 anticipé (incompatibilité de dépendances).
+name: sklearn-training-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.21
+  - pip
+  - pip:
+      # --- Versions confirmées par le conda.yaml auto-généré du modèle, et par
+      #     un diagnostic pip show sur l'environnement curaté d'origine ---
+      - scikit-learn==1.5.2
+      - pandas==1.5.3
+      - numpy==1.22.4
+      - cloudpickle==3.1.2
+      - psutil==5.8.0
+      - mlflow==3.13.0
+      # --- Dépendances supplémentaires nécessaires côté entraînement
+      #     (utilisées dans train_sweep.py/evaluate.py/register.py,
+      #     absentes du conda.yaml du modèle car non requises pour
+      #     recharger un modèle déjà packagé) ---
+      - joblib==1.3.2
+      - azureml-mlflow==1.62.0.post5
+      - protobuf==6.33.6
