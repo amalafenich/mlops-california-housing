@@ -1,4 +1,3 @@
-# mlops-california-housing
 # California Housing — Pipeline MLOps sur Azure ML
 
 ## 1. Description du projet
