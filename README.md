@@ -165,36 +165,37 @@ Après la création manuelle de notre workspace Azure Machine Learning (section 
 - **Data Asset `california-housing-raw`** — dans le workspace → **Auteur → Données → + Créer**, type Fichier, sélectionner le fichier via le datastore `datastore_datasets_bruts` créé ci-dessus. Le Data Asset apparaît avec Version 1.
   *Rôle : référence immuable et traçable du dataset, utilisée par `pipeline.ipynb` pour les jobs d'entraînement futurs.*
 
-
 ## 7. Runner self-hosted GitHub Actions
 
-Le CD (jobs `build-and-push`, `deploy`, `test-endpoint`) s'exécute sur un runner self-hosted, car il doit accéder à Docker et à une session Azure CLI déjà authentifiée.
+Le **runner self-hosted** est la machine qui exécute certains jobs GitHub Actions du projet. Dans notre cas, il permet d'exécuter les étapes du CD directement sur l'instance de calcul Azure ML.
 
-`actions-runner` n'a pas été créé par `pipeline.ipynb` : il a été installé manuellement, dans le **terminal de l'instance de calcul Azure ML**, pour transformer cette machine en runner self-hosted. Démarche suivie :
+Le runner a été installé manuellement sur l'instance de calcul Azure ML et n'est pas créé par `pipeline.ipynb`.
 
-1. Créer et se placer dans le dossier du runner :
-   ```bash
-   mkdir actions-runner
-   cd actions-runner
-   ```
-2. Télécharger le package du runner fourni par GitHub :
-   ```bash
-   curl -o actions-runner.tar.gz -L <URL_FOURNIE_PAR_GITHUB>
-   ```
-3. Extraire l'archive :
-   ```bash
-   tar xzf actions-runner.tar.gz
-   ```
-4. Connecter la machine au dépôt :
-   ```bash
-   ./config.sh --url https://github.com/amalafenich/mlops-california-housing --token <TOKEN_FOURNI_PAR_GITHUB>
-   ```
-5. Démarrer le runner :
-   ```bash
-   ./run.sh
-   ```
+### Installation du runner
 
-Le `<TOKEN_FOURNI_PAR_GITHUB>` ci-dessus est un token d'enregistrement éphémère, affiché par GitHub sur la page de configuration du runner. Il est différent du token utilisé par `register.py`.
+Pour installer le runner, accéder au dépôt GitHub :
+
+**Settings → Actions → Runners → New self-hosted runner**
+
+Ensuite :
+
+1. Choisir **Linux** comme système d'exploitation.
+2. Choisir **x64** comme architecture.
+3. GitHub affiche automatiquement les commandes nécessaires à l'installation et à la configuration du runner.
+4. Exécuter ces commandes **telles qu'elles sont affichées par GitHub** dans le terminal de l'instance de calcul Azure ML.
+
+Une fois l'installation terminée, le runner est associé au dépôt et peut recevoir les jobs GitHub Actions.
+
+### Redémarrer le runner
+
+Si le runner a déjà été installé et qu'on souhaite simplement le démarrer à nouveau, il n'est pas nécessaire de refaire toute l'installation.
+
+Dans le terminal Azure ML, se placer dans le dossier du runner :
+
+```bash
+cd actions-runner
+./run.sh
+```
 
 ### 7.1. Token GitHub pour le déclenchement automatique
 
