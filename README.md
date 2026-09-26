@@ -315,6 +315,7 @@ L'URL et la clé de l'endpoint sont codées en dur dans le script (voir section 
 Lors du test réalisé, l'API a retourné HTTP 200 avec une prédiction d'environ 408161,85.
 
 ## 11. Ressources principales du projet
+Cette section présente les principales ressources Azure utilisées pour mettre en place et exécuter l'infrastructure MLOps du projet.
 
 | Élément | Valeur |
 |---|---|
