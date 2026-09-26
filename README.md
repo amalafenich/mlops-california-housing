@@ -92,6 +92,7 @@ mlops-california-housing/
 ## 4. Dataset utilisé
 
 Le dataset est **California Housing Prices**, dérivé du recensement californien de 1990 (10 colonnes, ~20 640 lignes), avec pour cible la valeur médiane des logements par bloc.
+Le dataset est disponible sur Kaggle : [California Housing Prices](https://www.kaggle.com/datasets/camnugent/california-housing-prices)
 
 | Colonne | Description |
 |---|---|
