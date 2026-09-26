@@ -263,7 +263,7 @@ Le modèle est enregistré uniquement si le R² obtenu respecte le seuil défini
 - R² < 0,7 : le modèle est rejeté et le déclenchement GitHub n'est pas effectué.
 - R² ≥ 0,7 : le modèle est enregistré puis le workflow GitHub Actions est déclenché.
 
-Les métriques obtenues lors de l'exécution de référence sont : RMSE = 50 062,77 — R² = 0,8087.
+Les métriques obtenues lors de l'exécution de référence sont : `RMSE = 50 062,77` — `R² = 0,8087`.
 
 ## 9. CI/CD et déploiement
 
