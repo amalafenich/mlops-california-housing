@@ -11,7 +11,7 @@ Le pipeline couvre :
 - le **déploiement en API REST** via un **Azure Managed Online Endpoint** ;
 - de l'**A/B testing (Champion/Challenger)** entre deux versions du modèle, avec répartition du trafic.
 
-Le modèle est un `RandomForestRegressor` (scikit-learn), entraîné avec recherche d'hyperparamètres (`n_estimators`, `max_depth`) et évalué sur RMSE et R².
+Le modèle est un `RandomForestRegressor` (scikit-learn), entraîné avec recherche d'hyperparamètres (`n_estimators`, `max_depth`) et évalué sur `RMSE` et `R²`.
 
 ## 2. Mode de fonctionnement
 
