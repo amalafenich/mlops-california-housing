@@ -40,8 +40,6 @@ flowchart TD
     end
 ```
 
-Deux autres déclencheurs existent en parallèle du `repository_dispatch` : un `push`/`pull_request` sur `main` (relance lint + tests, et le déploiement sur `push`), et un déclenchement manuel (`workflow_dispatch`).
-
 ## 3. Structure du dépôt
 
 ```
