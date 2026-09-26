@@ -120,7 +120,7 @@ git clone <url-du-dépôt>
 cd mlops-california-housing
 
 python -m venv venv
-source venv/bin/activate   # sous Windows : venv\Scripts\activate
+source venv/bin/activate   (# sous Windows : venv\Scripts\activate)
 
 pip install -r requirements-dev.txt
 
@@ -133,17 +133,7 @@ pytest tests/ -v
 
 ## 6. Infrastructure Azure
 
-### 6.1. Ressources créées automatiquement
-
-Pour obtenir la création automatique des ressources ci-dessous, il suffit de créer le workspace Azure Machine Learning (section 6.2) : rechercher « Azure Machine Learning » dans la barre de recherche du portail Azure, cliquer sur **+ Créer**, puis renseigner le groupe de ressources, le nom et la région. Ces ressources sont alors provisionnées automatiquement, dans le même groupe de ressources :
-
-- **Coffre de clés (Key Vault)** : stocke de façon sécurisée les secrets et clés sensibles utilisés par le workspace (ex. le token GitHub).
-- **Compte de stockage** : stocke les données, les artefacts de run et les logs du workspace.
-- **Espace de travail Log Analytics** : centralise les logs et métriques de supervision du workspace.
-- **Application Insights** : collecte la télémétrie et les métriques de performance des endpoints déployés.
-- **Azure Container Registry (ACR)** : héberge les images Docker construites pour le workspace, ici l'image de scoring `california-housing-scoring`.
-
-### 6.2. Ressources créées manuellement (depuis le portail Azure, sans CLI ni IaC)
+### 6.1. Ressources créées manuellement (depuis le portail Azure, sans CLI ni IaC)
 
 - **Groupe de ressources** : `afenichamal` — Portail Azure → barre de recherche « Groupes de ressources » → **+ Créer** → renseigner nom et région.
   *Rôle : conteneur logique qui regroupe toutes les ressources du projet.*
@@ -155,6 +145,16 @@ Pour obtenir la création automatique des ressources ci-dessous, il suffit de cr
   Taille de VM : `Standard_F2s_v2` (famille Fsv2).
   *Rôle : cible d'exécution des 4 étapes du pipeline (préparation, sweep, évaluation, enregistrement).*
   Cette taille a été choisie pour éviter un conflit de quota avec le déploiement Champion, qui utilisait déjà des ressources de la famille DSv2.
+
+### 6.2. Ressources créées automatiquement
+
+Après la création manuelle de notre workspace Azure Machine Learning (section 6.1). Ces ressources sont alors provisionnées automatiquement, dans le même groupe de ressources que nous avons déjà crée :
+
+- **Coffre de clés (Key Vault)** : stocke de façon sécurisée les secrets et clés sensibles utilisés par le workspace (ex. le token GitHub).
+- **Compte de stockage** : stocke les données, les artefacts de run et les logs du workspace.
+- **Espace de travail Log Analytics** : centralise les logs et métriques de supervision du workspace.
+- **Application Insights** : collecte la télémétrie et les métriques de performance des endpoints déployés.
+- **Azure Container Registry (ACR)** : héberge les images Docker construites pour le workspace, ici l'image de scoring `california-housing-scoring`.
 
 ### 6.3. Versioning du dataset
 
